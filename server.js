@@ -7,11 +7,12 @@ const {
 const express = require("express");
 const pino = require("pino");
 const qrcode = require("qrcode-terminal");
+const QRCode = require("qrcode");
 
 const app = express();
 app.use(express.json());
 
-let sock = null;
+let currentQR = null;
 let isConnected = false;
 
 async function conectarWhatsApp() {
@@ -27,8 +28,9 @@ async function conectarWhatsApp() {
 
   sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
     if (qr) {
-      console.log("\n📱 Escanea este QR con WhatsApp:\n");
-      qrcode.generate(qr, { small: true });
+     currentQR = qr;
+     console.log("\n📱 QR disponible en http://localhost:3000\n");
+     qrcode.generate(qr, { small: true });
     }
     if (connection === "close") {
       isConnected = false;
@@ -59,9 +61,24 @@ async function enviarMensaje(celular, mensaje) {
   return { jid, mensaje };
 }
 
-app.get("/", (req, res) => {
-  res.json({ status: isConnected ? "conectado" : "desconectado" });
+app.get("/", async (req, res) => {
+  if (isConnected) {
+    return res.send("<h2 style='font-family:sans-serif;color:green'>✅ WhatsApp conectado correctamente</h2>");
+  }
+  if (!currentQR) {
+    return res.send("<h2 style='font-family:sans-serif'>⏳ Generando QR, recarga en 5 segundos...</h2><script>setTimeout(()=>location.reload(),5000)</script>");
+  }
+  const qrImage = await QRCode.toDataURL(currentQR);
+  res.send(`
+    <html><body style="font-family:sans-serif;text-align:center;padding:40px">
+    <h2>Escanea con WhatsApp</h2>
+    <img src="${qrImage}" style="width:300px;height:300px"/>
+    <p>WhatsApp → ⋮ → Dispositivos vinculados → Vincular dispositivo</p>
+    <script>setTimeout(()=>location.reload(),30000)</script>
+    </body></html>
+  `);
 });
+
 
 app.post("/confirmar-pago", async (req, res) => {
   const { celular, nombre, valor, plan, fecha_pago, tipo } = req.body;
@@ -81,7 +98,7 @@ app.post("/confirmar-pago", async (req, res) => {
       `• Valor: ${valor}\n` +
       `• Fecha: ${fecha_pago}\n\n` +
       `Gracias por tu pago. Tu servicio continúa activo. 🌐`;
-  } else {
+  } else 
     mensaje =
       `✅ *Pago Registrado*\n\n` +
       `Hola *${nombre}*,\n\n` +
