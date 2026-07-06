@@ -4,25 +4,20 @@ const express = require("express");
 const pino = require("pino");
 const qrcode = require("qrcode-terminal");
 const QRCode = require("qrcode");
-
 const app = express();
 app.use(express.json());
-
 let sock = null;
 let isConnected = false;
 let currentQR = null;
-
 async function conectarWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState("auth_session");
   const { version } = await fetchLatestBaileysVersion();
-
   sock = makeWASocket({
     version,
     logger: pino({ level: "silent" }),
     auth: state,
     printQRInTerminal: false,
   });
-
   sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
     if (qr) {
       currentQR = qr;
@@ -40,10 +35,8 @@ async function conectarWhatsApp() {
       console.log("✅ WhatsApp conectado!");
     }
   });
-
   sock.ev.on("creds.update", saveCreds);
 }
-
 async function enviarMensaje(celular, mensaje) {
   if (!isConnected || !sock) throw new Error("WhatsApp no está conectado");
   let numero = String(celular).replace(/\D/g, "");
@@ -53,11 +46,9 @@ async function enviarMensaje(celular, mensaje) {
   console.log("📤 Mensaje enviado a " + jid);
   return { jid, mensaje };
 }
-
 app.get("/", (req, res) => {
   res.json({ status: isConnected ? "conectado" : "desconectado" });
 });
-
 app.get("/qr", async (req, res) => {
   if (isConnected) {
     return res.send("<h2 style='font-family:sans-serif;color:green;text-align:center;padding:40px'>✅ WhatsApp ya está conectado</h2>");
@@ -68,18 +59,22 @@ app.get("/qr", async (req, res) => {
   const qrImage = await QRCode.toDataURL(currentQR);
   res.send("<html><body style='font-family:sans-serif;text-align:center;padding:40px'><h2>Escanea con WhatsApp</h2><img src='" + qrImage + "' style='width:300px;height:300px'/><p>WhatsApp → ⋮ → Dispositivos vinculados → Vincular dispositivo</p><script>setTimeout(()=>location.reload(),30000)</script></body></html>");
 });
-
 app.post("/confirmar-pago", async (req, res) => {
-  const { celular, nombre, valor, plan, fecha_pago, tipo } = req.body;
+  const { celular, nombre, valor, plan, fecha_pago, tipo, mensaje: mensajePersonalizado } = req.body;
   if (!celular || !nombre) return res.status(400).json({ error: "Faltan campos" });
-
   let mensaje;
-  if (tipo === "transferencia") {
+
+  // ★ NUEVO — Si el mensaje ya viene armado desde Apps Script (ej. tipo "cobro"), úsalo directamente
+  if (mensajePersonalizado) {
+    mensaje = mensajePersonalizado;
+  } else if (tipo === "transferencia") {
     mensaje = "✅ *Confirmación de Pago*\n\nHola *" + nombre + "*,\n\nHemos recibido tu transferencia correctamente.\n\n📋 *Detalle:*\n• Plan: " + plan + "\n• Valor: " + valor + "\n• Fecha: " + fecha_pago + "\n\nGracias por tu pago. Tu servicio continúa activo. 🌐";
+  } else if (tipo === "cobro") {
+    // ★ NUEVO — Respaldo por si algún día no llega el campo "mensaje" desde Apps Script
+    mensaje = "📋 *Recordatorio de Pago*\n\nHola *" + nombre + "*,\n\nTe recordamos que tienes un pago pendiente.\n\n📋 *Detalle:*\n• Plan: " + plan + "\n• Valor: " + valor + "\n• Fecha límite: " + fecha_pago + "\n\nPor favor realiza tu pago antes de la fecha límite. 🌐";
   } else {
     mensaje = "✅ *Pago Registrado*\n\nHola *" + nombre + "*,\n\nTu pago ha sido registrado exitosamente.\n\n📋 *Detalle:*\n• Plan: " + plan + "\n• Valor: " + valor + "\n• Fecha: " + fecha_pago + "\n\n¡Gracias por mantenerte al día! 🎉";
   }
-
   try {
     const resultado = await enviarMensaje(celular, mensaje);
     res.json({ ok: true, ...resultado });
@@ -87,7 +82,6 @@ app.post("/confirmar-pago", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 const PORT = process.env.PORT || 3000;
 conectarWhatsApp().then(() => {
   app.listen(PORT, () => {
